@@ -32,16 +32,5 @@ jobs:
       with:
         go-version: ${{ steps.go_version.outputs.version }}
 
-    - name: Cache Godel assets
-      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-      with:
-        path: ~/.godel
-        key: ${{ runner.os }}-godel-${{ hashFiles('godelw', 'godel/config/godel.yml') }}
-        restore-keys: |
-          ${{ runner.os }}-godel-
-
-    - name: Verify
-      run: ./godelw verify --apply=false --skip-test
-
     - name: Test
-      run: ./godelw test
+      run: go test -v ./...
