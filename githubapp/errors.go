@@ -19,7 +19,8 @@ import (
 	"io"
 	"runtime"
 
-	"github.com/rcrowley/go-metrics"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 )
 
 const (
@@ -32,16 +33,12 @@ var (
 	HandlerRecoverStackDepth = 32
 )
 
-func errorCounter(r metrics.Registry, event string) metrics.Counter {
-	if r == nil {
-		return metrics.NilCounter{}
+func errorCounter(meter metric.Meter) metric.Int64Counter {
+	if meter == nil {
+		meter = noop.Meter{}
 	}
-
-	key := MetricsKeyHandlerError
-	if event != "" {
-		key = fmt.Sprintf("%s[event:%s]", key, event)
-	}
-	return metrics.GetOrRegisterCounter(key, r)
+	counter, _ := meter.Int64Counter(MetricsKeyHandlerError)
+	return counter
 }
 
 // HandlerPanicError is an error created from a recovered handler panic.

@@ -22,7 +22,6 @@ logic of your application.
 * [Config Loading](#config-loading)
 * [OAuth2](#oauth2)
 * [Stability and Versioning Guarantees](#stability-and-versioning-guarantees)
-* [Contributing](#contributing)
 
 ## Usage
 
@@ -87,7 +86,7 @@ run:
 `go-githubapp` has minimal dependencies, but does make some decisions:
 
 - [rs/zerolog](https://github.com/rs/zerolog) for logging
-- [rcrowley/go-metrics](https://github.com/rcrowley/go-metrics) for metrics
+- [go.opentelemetry.io/otel/metric](https://pkg.go.dev/go.opentelemetry.io/otel/metric) for metrics
 - [google/go-github](https://github.com/google/go-github) for v3 (REST) API client
 - [shurcooL/githubv4](https://github.com/shurcooL/githubv4) for v4 (GraphQL) API client
 
@@ -204,7 +203,7 @@ baseHandler, err := githubapp.NewDefaultCachingClientCreator(
     githubapp.WithClientUserAgent("example-app/1.0.0"),
     githubapp.WithClientCaching(false, func() httpcache.Cache { return httpcache.NewMemoryCache() }),
     githubapp.WithClientMiddleware(
-        githubapp.ClientMetrics(registry),
+        githubapp.ClientMetrics(meter),
         githubapp.ClientLogging(zerolog.DebugLevel),
     ),
     ...
@@ -212,8 +211,7 @@ baseHandler, err := githubapp.NewDefaultCachingClientCreator(
 ```
 
 ## Metrics
-
-`go-githubapp` uses [rcrowley/go-metrics][] to provide metrics. Metrics are
+`go-githubapp` uses [go.opentelemetry.io/otel/metric][] to provide metrics. Metrics are
 optional and disabled by default.
 
 GitHub clients emit the following metrics when configured with the
@@ -221,21 +219,25 @@ GitHub clients emit the following metrics when configured with the
 
 | metric name | type | definition |
 | ----------- | ---- | ---------- |
-| `github.requests` | `counter` | the count of successfully completed requests made to GitHub |
-| `github.requests.2xx` | `counter` | like `github.requests`, but only counting 2XX status codes |
-| `github.requests.3xx` | `counter` | like `github.requests`, but only counting 3XX status codes |
-| `github.requests.4xx` | `counter` | like `github.requests`, but only counting 4XX status codes |
-| `github.requests.5xx` | `counter` | like `github.requests`, but only counting 5XX status codes |
-| `github.requests.cached` | `counter` | the count of successfully cached requests |
-| `github.rate.limit[installation:<id>]` | `gauge` | the maximum number of requests permitted to make per hour, tagged with the installation id |
-| `github.rate.remaining[installation:<id>]` | `gauge` | the number of requests remaining in the current rate limit window, tagged with the installation id |
+| `github.requests.cached` | `counter` | the count of successfully cached requests, tagged with the installation id |
+| `github.rate.limit` | `gauge` | the maximum number of requests permitted to make per hour, tagged with the installation id |
+| `github.rate.remaining` | `gauge` | the number of requests remaining in the current rate limit window, tagged with the installation id |
+| `github.rate.used` | `gauge` | the number of requests used in the current rate limit window, tagged with the installation id |
+| `github.rate.reset` | `gauge` | the unix timestamp when the current rate limit window resets, tagged with the installation id |
+
+`githubapp.ClientMetrics` does not record generic request counts or status
+codes. If you want those, consider building your application with
+[OpenTelemetry's compile-time Go instrumentation][otelc], which
+automatically instruments `net/http` (and other supported libraries) with no
+code changes required.
+
 
 When using [asynchronous dispatch](#asynchronous-dispatch), the
 `githubapp.WithSchedulingMetrics` option emits the following metrics:
 
 | metric name | type | definition |
 | ----------- | ---- | ---------- |
-| `github.event.queue` | `gauge` | the number of queued unprocessed event |
+| `github.event.queued` | `gauge` | the number of queued unprocessed events |
 | `github.event.workers` | `gauge` | the number of workers actively processing events |
 | `github.event.dropped` | `counter` | the number events dropped due to limited queue capacity |
 | `github.event.age` | `histogram` | the age (queue time) in milliseconds of events at processing time |
@@ -245,13 +247,14 @@ the event dispatcher and asynchronous schedulers emit the following metrics:
 
 | metric name | type | definition |
 | ----------- | ---- | ---------- |
-| `github.handler.error[event:<type>]` | `counter` | the number of processing errors, tagged with the GitHub event type |
+| `github.handler.error` | `counter` | the number of processing errors, tagged with the GitHub event type |
 
-Note that metrics need to be published in order to be useful. Several
-[publishing options][] are available or you can implement your own.
+Note that metrics need to be published in order to be useful. See the
+[OpenTelemetry Go documentation][otel-go] for available exporters.
 
-[rcrowley/go-metrics]: https://github.com/rcrowley/go-metrics
-[publishing options]: https://github.com/rcrowley/go-metrics#publishing-metrics
+[go.opentelemetry.io/otel/metric]: https://pkg.go.dev/go.opentelemetry.io/otel/metric
+[publishing options]: https://opentelemetry.io/docs/languages/go/
+[otelc]: https://opentelemetry.io/blog/2026/go-compile-time-instrumentation-v1/
 
 ## Background Jobs and Multi-Organization Operations
 
@@ -398,20 +401,6 @@ recommend vendoring this library to avoid surprises.
 In general, fixes will only be applied to trunk and future releases, not
 backported to older versions.
 
-## Contributing
-
-Contributions and issues are welcome. For new features or large contributions,
-we prefer discussing the proposed change on a GitHub issue prior to a PR.
-
-New functionality should avoid adding new dependencies if possible and should
-be broadly useful. Feature requests that are specific to certain uses will
-likely be declined unless they can be redesigned to be generic or optional.
-
-Before submitting a pull request, please run tests and style checks:
-
-```
-./godelw verify
-```
 
 ## License
 

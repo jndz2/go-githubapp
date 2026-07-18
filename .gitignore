@@ -6,3 +6,9 @@
 *.iws
 *.ipr
 .idea/
+
+# example ignored files
+example/.otelc-build/
+example/otel.instrumentation.go
+example/otelc.runtime.go
+example/example
