@@ -22,8 +22,8 @@ import (
 
 	"github.com/gregjones/httpcache"
 	"github.com/palantir/go-githubapp/githubapp"
-	"github.com/rcrowley/go-metrics"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel"
 )
 
 func main() {
@@ -35,7 +35,7 @@ func main() {
 	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
 	zerolog.DefaultContextLogger = &logger
 
-	metricsRegistry := metrics.DefaultRegistry
+	meter := otel.GetMeterProvider().Meter("github.com/jndz2/go-githubapp/example")
 
 	cc, err := githubapp.NewDefaultCachingClientCreator(
 		config.Github,
@@ -43,7 +43,7 @@ func main() {
 		githubapp.WithClientTimeout(3*time.Second),
 		githubapp.WithClientCaching(false, func() httpcache.Cache { return httpcache.NewMemoryCache() }),
 		githubapp.WithClientMiddleware(
-			githubapp.ClientMetrics(metricsRegistry),
+			githubapp.ClientMetrics(meter),
 		),
 	)
 	if err != nil {

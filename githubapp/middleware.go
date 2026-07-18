@@ -15,21 +15,17 @@
 package githubapp
 
 import (
-	"fmt"
+	"context"
 	"net/http"
 	"strconv"
 
 	"github.com/gregjones/httpcache"
-	"github.com/rcrowley/go-metrics"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 )
 
 const (
-	MetricsKeyRequests    = "github.requests"
-	MetricsKeyRequests2xx = "github.requests.2xx"
-	MetricsKeyRequests3xx = "github.requests.3xx"
-	MetricsKeyRequests4xx = "github.requests.4xx"
-	MetricsKeyRequests5xx = "github.requests.5xx"
-
 	MetricsKeyRequestsCached = "github.requests.cached"
 
 	MetricsKeyRateLimit          = "github.rate.limit"
@@ -40,50 +36,35 @@ const (
 
 // ClientMetrics creates client middleware that records metrics about all
 // requests. It also defines the metrics in the provided registry.
-func ClientMetrics(registry metrics.Registry) ClientMiddleware {
-	for _, key := range []string{
-		MetricsKeyRequests,
-		MetricsKeyRequests2xx,
-		MetricsKeyRequests3xx,
-		MetricsKeyRequests4xx,
-		MetricsKeyRequests5xx,
-		MetricsKeyRequestsCached,
-	} {
-		// Use GetOrRegister for thread-safety when creating multiple
-		// RoundTrippers that share the same registry
-		metrics.GetOrRegisterCounter(key, registry)
+func ClientMetrics(meter metric.Meter) ClientMiddleware {
+	if meter == nil {
+		meter = noop.Meter{}
 	}
+
+	cachedCounter, _ := meter.Int64Counter(MetricsKeyRequestsCached)
+	limitGauge, _ := meter.Int64Gauge(MetricsKeyRateLimit)
+	remainingGauge, _ := meter.Int64Gauge(MetricsKeyRateLimitRemaining)
+	usedGauge, _ := meter.Int64Gauge(MetricsKeyRateLimitUsed)
+	resetGauge, _ := meter.Int64Gauge(MetricsKeyRateLimitReset)
 
 	return func(next http.RoundTripper) http.RoundTripper {
 		return roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			installationID, ok := r.Context().Value(installationKey).(int64)
-			if !ok {
-				installationID = 0
-			}
+			installationID, _ := r.Context().Value(installationKey).(int64)
 
 			res, err := next.RoundTrip(r)
-
 			if res != nil {
-				registry.Get(MetricsKeyRequests).(metrics.Counter).Inc(1)
-				if key := bucketStatus(res.StatusCode); key != "" {
-					registry.Get(key).(metrics.Counter).Inc(1)
-				}
+				ctx := r.Context()
+				attrs := metric.WithAttributes(attribute.Int64("installation", installationID))
 
 				if res.Header.Get(httpcache.XFromCache) != "" {
-					registry.Get(MetricsKeyRequestsCached).(metrics.Counter).Inc(1)
+					cachedCounter.Add(ctx, 1, attrs)
 				}
 
-				limitMetric := fmt.Sprintf("%s[installation:%d]", MetricsKeyRateLimit, installationID)
-				remainingMetric := fmt.Sprintf("%s[installation:%d]", MetricsKeyRateLimitRemaining, installationID)
-				usedMetric := fmt.Sprintf("%s[installation:%d]", MetricsKeyRateLimitUsed, installationID)
-				resetMetric := fmt.Sprintf("%s[installation:%d]", MetricsKeyRateLimitReset, installationID)
-
 				// Headers from https://developer.github.com/v3/#rate-limiting
-				updateRegistryForHeader(res.Header, httpHeaderRateLimit, metrics.GetOrRegisterGauge(limitMetric, registry))
-				updateRegistryForHeader(res.Header, httpHeaderRateRemaining, metrics.GetOrRegisterGauge(remainingMetric, registry))
-				updateRegistryForHeader(res.Header, httpHeaderRateUsed, metrics.GetOrRegisterGauge(usedMetric, registry))
-				updateRegistryForHeader(res.Header, httpHeaderRateReset, metrics.GetOrRegisterGauge(resetMetric, registry))
-				// TODO Think about to add X-Ratelimit-Resource as well
+				updateGaugeForHeader(ctx, res.Header, httpHeaderRateLimit, limitGauge, attrs)
+				updateGaugeForHeader(ctx, res.Header, httpHeaderRateRemaining, remainingGauge, attrs)
+				updateGaugeForHeader(ctx, res.Header, httpHeaderRateUsed, usedGauge, attrs)
+				updateGaugeForHeader(ctx, res.Header, httpHeaderRateReset, resetGauge, attrs)
 			}
 
 			return res, err
@@ -91,28 +72,14 @@ func ClientMetrics(registry metrics.Registry) ClientMiddleware {
 	}
 }
 
-func updateRegistryForHeader(headers http.Header, header string, metric metrics.Gauge) {
+func updateGaugeForHeader(ctx context.Context, headers http.Header, header string, gauge metric.Int64Gauge, attrs metric.RecordOption) {
 	headerString := headers.Get(header)
-	if headerString != "" {
-		headerVal, err := strconv.ParseInt(headerString, 10, 64)
-		if err == nil {
-			metric.Update(headerVal)
-		}
+	if headerString == "" {
+		return
 	}
-}
-
-func bucketStatus(status int) string {
-	switch {
-	case status >= 200 && status < 300:
-		return MetricsKeyRequests2xx
-	case status >= 300 && status < 400:
-		return MetricsKeyRequests3xx
-	case status >= 400 && status < 500:
-		return MetricsKeyRequests4xx
-	case status >= 500 && status < 600:
-		return MetricsKeyRequests5xx
+	if headerVal, err := strconv.ParseInt(headerString, 10, 64); err == nil {
+		gauge.Record(ctx, headerVal, attrs)
 	}
-	return ""
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)

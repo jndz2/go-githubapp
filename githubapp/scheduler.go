@@ -20,8 +20,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rcrowley/go-metrics"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 )
 
 const (
@@ -29,12 +31,6 @@ const (
 	MetricsKeyActiveWorkers = "github.event.workers"
 	MetricsKeyEventAge      = "github.event.age"
 	MetricsKeyDroppedEvents = "github.event.dropped"
-)
-
-const (
-	// values from metrics.NewTimer, which match those used by UNIX load averages
-	histogramReservoirSize = 1028
-	histogramAlpha         = 0.015
 )
 
 var (
@@ -70,10 +66,12 @@ func DefaultAsyncErrorCallback(ctx context.Context, d Dispatch, err error) {
 var defaultAsyncErrorCallback = MetricsAsyncErrorCallback(nil)
 
 // MetricsAsyncErrorCallback logs errors and increments an error counter.
-func MetricsAsyncErrorCallback(reg metrics.Registry) AsyncErrorCallback {
+func MetricsAsyncErrorCallback(meter metric.Meter) AsyncErrorCallback {
+	counter := errorCounter(meter)
+
 	return func(ctx context.Context, d Dispatch, err error) {
 		zerolog.Ctx(ctx).Error().Err(err).Msg("Unexpected error handling webhook")
-		errorCounter(reg, d.EventType).Inc(1)
+		counter.Add(ctx, 1, metric.WithAttributes(attribute.String("event", d.EventType)))
 	}
 }
 
@@ -105,18 +103,27 @@ func WithAsyncErrorCallback(onError AsyncErrorCallback) SchedulerOption {
 }
 
 // WithSchedulingMetrics enables metrics reporting for schedulers.
-func WithSchedulingMetrics(r metrics.Registry) SchedulerOption {
+func WithSchedulingMetrics(meter metric.Meter) SchedulerOption {
 	return func(s *scheduler) {
-		metrics.NewRegisteredFunctionalGauge(MetricsKeyQueueLength, r, func() int64 {
-			return int64(len(s.queue))
-		})
-		metrics.NewRegisteredFunctionalGauge(MetricsKeyActiveWorkers, r, func() int64 {
-			return atomic.LoadInt64(&s.activeWorkers)
-		})
+		if meter == nil {
+			meter = noop.Meter{}
+		}
 
-		sample := metrics.NewExpDecaySample(histogramReservoirSize, histogramAlpha)
-		s.eventAge = metrics.NewRegisteredHistogram(MetricsKeyEventAge, r, sample)
-		s.dropped = metrics.NewRegisteredCounter(MetricsKeyDroppedEvents, r)
+		_, _ = meter.Int64ObservableGauge(MetricsKeyQueueLength,
+			metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+				o.Observe(int64(len(s.queue)))
+				return nil
+			}),
+		)
+		_, _ = meter.Int64ObservableGauge(MetricsKeyActiveWorkers,
+			metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+				o.Observe(atomic.LoadInt64(&s.activeWorkers))
+				return nil
+			}),
+		)
+
+		s.eventAge, _ = meter.Int64Histogram(MetricsKeyEventAge, metric.WithUnit("ms"))
+		s.dropped, _ = meter.Int64Counter(MetricsKeyDroppedEvents)
 	}
 }
 
@@ -133,8 +140,8 @@ type scheduler struct {
 	activeWorkers int64
 	queue         chan queueDispatch
 
-	eventAge metrics.Histogram
-	dropped  metrics.Counter
+	eventAge metric.Int64Histogram
+	dropped  metric.Int64Counter
 }
 
 func (s *scheduler) safeExecute(ctx context.Context, d Dispatch) {
@@ -216,7 +223,7 @@ func QueueAsyncScheduler(queueSize int, workers int, opts ...SchedulerOption) Sc
 		go func() {
 			for d := range s.queue {
 				if s.eventAge != nil {
-					s.eventAge.Update(time.Since(d.t).Milliseconds())
+					s.eventAge.Record(d.ctx, time.Since(d.t).Milliseconds())
 				}
 				s.safeExecute(d.ctx, d.d)
 			}
@@ -235,7 +242,7 @@ func (s *queueScheduler) Schedule(ctx context.Context, d Dispatch) error {
 	case s.queue <- queueDispatch{ctx: context.WithoutCancel(ctx), t: time.Now(), d: d}:
 	default:
 		if s.dropped != nil {
-			s.dropped.Inc(1)
+			s.dropped.Add(ctx, 1)
 		}
 		return ErrCapacityExceeded
 	}

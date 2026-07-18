@@ -21,8 +21,9 @@ import (
 	"net/http"
 
 	"github.com/google/go-github/v86/github"
-	"github.com/rcrowley/go-metrics"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 const (
@@ -211,7 +212,9 @@ var defaultErrorCallback = MetricsErrorCallback(nil)
 
 // MetricsErrorCallback logs errors, increments an error counter, and responds
 // with an appropriate status code.
-func MetricsErrorCallback(reg metrics.Registry) ErrorCallback {
+func MetricsErrorCallback(meter metric.Meter) ErrorCallback {
+	counter := errorCounter(meter)
+
 	return func(w http.ResponseWriter, r *http.Request, err error) {
 		logger := zerolog.Ctx(r.Context())
 
@@ -228,7 +231,7 @@ func MetricsErrorCallback(reg metrics.Registry) ErrorCallback {
 		}
 
 		logger.Error().Err(err).Msg("Unexpected error handling webhook")
-		errorCounter(reg, r.Header.Get("X-Github-Event")).Inc(1)
+		counter.Add(r.Context(), 1, metric.WithAttributes(attribute.String("event", r.Header.Get("X-Github-Event"))))
 
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 	}
