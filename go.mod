@@ -1,4 +1,4 @@
-module github.com/palantir/go-githubapp
+module github.com/jndz2/go-githubapp
 
 go 1.26.0
 

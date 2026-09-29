@@ -21,7 +21,7 @@ import (
 	"strings"
 
 	"github.com/google/go-github/v86/github"
-	"github.com/palantir/go-githubapp/githubapp"
+	"github.com/jndz2/go-githubapp/githubapp"
 	"github.com/rs/zerolog"
 )
 

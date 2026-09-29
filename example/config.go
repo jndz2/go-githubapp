@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/palantir/go-githubapp/githubapp"
+	"github.com/jndz2/go-githubapp/githubapp"
 	"gopkg.in/yaml.v2"
 )
 
