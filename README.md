@@ -70,17 +70,6 @@ We recommend using [go-baseapp](https://github.com/palantir/go-baseapp) as the m
 framework for writing github apps, though go-githubapp works well with the standard library and 
 can be easily integrated into most existing frameworks.
 
-### Examples
-
-The [example package](example/main.go) contains a fully functional server
-using `go-githubapp`. The example app responds to comments on pull requests by
-commenting with a copy of the comment body.
-
-To run the app, update `example/config.yml` with appropriate secrets and then
-run:
-
-    ./godelw run example
-
 ### Dependencies
 
 `go-githubapp` has minimal dependencies, but does make some decisions:
