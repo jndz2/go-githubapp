@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/gregjones/httpcache"
-	"github.com/palantir/go-githubapp/githubapp"
+	"github.com/jndz2/go-githubapp/githubapp"
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel"
 )
